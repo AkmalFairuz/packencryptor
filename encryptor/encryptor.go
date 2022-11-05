@@ -85,6 +85,7 @@ func EncryptPack(path string, dest string, key string) {
 	if err != nil {
 		panic(err)
 	}
+	_, err = content.Write(make([]byte, 256))
 	_, err = content.Write(contentJsonEncrypted)
 	if err != nil {
 		panic(err)
