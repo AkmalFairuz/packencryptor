@@ -2,6 +2,7 @@ package encryptor
 
 import (
 	"archive/zip"
+	"bytes"
 	"compress/flate"
 	"crypto/aes"
 	"crypto/cipher"
@@ -31,10 +32,28 @@ func EncryptPack(path string, dest string, key string) {
 		return flate.NewWriter(out, flate.BestCompression)
 	})
 	var contents Contents
+	uuid := ""
 
 	for _, f := range oldPack.File {
 		if f.FileInfo().IsDir() {
 			continue
+		}
+		if f.Name == "manifest.json" {
+			var manifest map[string]any
+			manifestReader, err := oldPack.Open(f.Name)
+			if err != nil {
+				panic(err)
+			}
+			manifestBytes, err := io.ReadAll(manifestReader)
+			if err != nil {
+				panic(err)
+			}
+			err = json.Unmarshal(manifestBytes, &manifest)
+			if err != nil {
+				panic(err)
+			}
+			manifestHeader := manifest["header"].(map[string]any)
+			uuid = manifestHeader["uuid"].(string)
 		}
 		if isIgnored(f.Name) {
 			ignoredFile, err := newPack.Create(f.Name)
@@ -67,7 +86,7 @@ func EncryptPack(path string, dest string, key string) {
 		if err != nil {
 			panic(err)
 		}
-		fileKey := randomString(32)
+		fileKey := RandomKey()
 		contents.Content = append(contents.Content, Content{Path: f.Name, Key: fileKey})
 		encryptedBytes := encrypt(fileBytes, []byte(fileKey))
 		fmt.Printf("Encrypting %s with key %s...\n", f.Name, fileKey)
@@ -76,16 +95,27 @@ func EncryptPack(path string, dest string, key string) {
 			panic(err)
 		}
 	}
+	if uuid == "" {
+		panic("resource pack uuid is missing")
+	}
 	contentJson, err := json.Marshal(&contents)
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println(string(contentJson))
 	contentJsonEncrypted := encrypt(contentJson, []byte(key))
 	content, err := newPack.Create("contents.json")
 	if err != nil {
 		panic(err)
 	}
-	_, err = content.Write(make([]byte, 256))
+	header := bytes.NewBuffer(nil)
+	header.Write([]byte{0, 0, 0, 0, 0xFC, 0xB9, 0xCF, 0x9B, 0, 0, 0, 0, 0, 0, 0, 0})
+	header.Write([]byte("$" + uuid))
+	header.Write(make([]byte, 256-header.Len()))
+	_, err = content.Write(header.Bytes())
+	if err != nil {
+		panic(err)
+	}
 	_, err = content.Write(contentJsonEncrypted)
 	if err != nil {
 		panic(err)
